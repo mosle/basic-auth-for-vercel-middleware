@@ -17,7 +17,7 @@ const unauthorized = (body: string): Response => {
 const createBasicAuthHandler = (
   authInfo: Credentials,
   unauthorizedText: string = "Authentication required.",
-  skip: ((request: Request) => boolean) | boolean = false
+  skip: ((request: Request) => boolean | undefined) | boolean = false
 ): ((request: Request) => Response) => {
   return (request: Request) => {
     if (skip === true || (typeof skip === "function" && skip(request)))
