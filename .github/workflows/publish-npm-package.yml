@@ -22,5 +22,5 @@ jobs:
           npm version patch -m "Bump version to %s [skip ci]"
           git push origin HEAD:main
           yarn install
-          yarn build
+          yarn prepare
           yarn publish --access public
