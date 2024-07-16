@@ -1,6 +1,6 @@
 {
   "name": "basic-auth-for-vercel-middleware",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Basic Authentication for vercel middleware",
   "repository": {
     "type": "git",
