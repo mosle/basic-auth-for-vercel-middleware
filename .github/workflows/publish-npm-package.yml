@@ -4,23 +4,79 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: write
+  id-token: write
+
+# Serialize publishes; never cancel one that may be mid-publish.
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
 jobs:
   version:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - name: Set up Node.js
-        uses: actions/setup-node@v2
-        with:
-          node-version: "16.x"
-      - name: Bump version and publish
-        env:
-          NPM_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
+      - uses: actions/checkout@v7
+      # Work on the *current* tip of main, not the SHA that triggered this run,
+      # so a re-run after a failed publish sees the bump commit that was
+      # already pushed instead of creating a conflicting one.
+      - name: Sync to tip of main
         run: |
+          git fetch --no-tags origin main
+          git checkout -B main origin/main
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.x"
+        # No registry-url: it would write an .npmrc that needs NODE_AUTH_TOKEN,
+        # which breaks Yarn Classic. OIDC publishing needs no token.
+      - name: Install
+        run: yarn install --frozen-lockfile
+      - name: Test
+        run: yarn test
+      - name: Build
+        run: yarn build
+      - name: Smoke test build output (CJS + ESM)
+        run: yarn test:build
+
+      #   tip version unpublished                  -> publish it as-is (retry path)
+      #   tip version published from this commit   -> nothing to do (re-run)
+      #   tip version published from another commit -> bump, push, publish
+      # Comparing against the gitHead npm recorded at publish time (rather than
+      # GITHUB_SHA) means a re-run of an older run still publishes newer commits
+      # that landed on main while it was queued.
+      - name: Decide version
+        id: decide
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          CUR=$(node -p "require('./package.json').version")
+          TIP=$(git rev-parse HEAD)
+          # One request for both fields, so a transient failure stops the run
+          # instead of being mistaken for "unpublished" or "no gitHead".
+          if OUT=$(npm view "$NAME@$CUR" version gitHead --json 2>&1); then
+            PUBLISHED=true
+          elif echo "$OUT" | grep -q 'E404'; then
+            PUBLISHED=false
+          else
+            echo "npm view failed:"; echo "$OUT"; exit 1
+          fi
+          if [ "$PUBLISHED" = false ]; then
+            echo "$NAME@$CUR is not on npm yet; publishing it without bumping"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          PUBLISHED_FROM=$(printf '%s' "$OUT" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).gitHead || ''")
+          if [ "$PUBLISHED_FROM" = "$TIP" ]; then
+            echo "$NAME@$CUR was already published from $TIP; nothing to do"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           npm version patch -m "Bump version to %s [skip ci]"
           git push origin HEAD:main
-          yarn install
-          yarn prepare
-          yarn publish --access public
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+      - name: Publish (npm trusted publishing via OIDC)
+        if: steps.decide.outputs.publish == 'true'
+        run: npm publish --access public --provenance

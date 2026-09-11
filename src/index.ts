@@ -1,2 +1,2 @@
-import createBasicAuthHandler from "./BasicAuth";
+import createBasicAuthHandler from "./BasicAuth.js";
 export { createBasicAuthHandler };
